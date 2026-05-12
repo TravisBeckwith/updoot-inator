@@ -86,5 +86,5 @@ updoot-inator --list
 ## Uninstall
 
 ```bash
-./uninstall.sh
+bash ./uninstall.sh
 ```
