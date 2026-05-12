@@ -2,6 +2,9 @@
 
 *"Behold, the Updoot-inator! It updoots ALL your packages!"*
 
+![Version](https://img.shields.io/badge/version-1.3.0-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
+
 A single command to update everything on your system — apt, snap, flatpak, brew, conda, pip, npm, cargo, and firmware.
 
 ## Install
@@ -45,6 +48,9 @@ updoot-inator --backup --show-sizes --reboot-check
 # Log output to file
 updoot-inator --log ~/update.log
 
+# Log with timestamp
+updoot-inator --log ~/updoot-$(date +%Y-%m-%d).log
+
 # List detected package managers
 updoot-inator --list
 ```
@@ -77,7 +83,7 @@ updoot-inator --list
 | snap | snap refresh |
 | flatpak | flatpak update |
 | brew | update, upgrade, cleanup |
-| conda | Updates base + all named environments |
+| conda | Updates base + all named and path-based environments |
 | pip | Upgrades all outdated packages individually |
 | npm | npm update -g |
 | cargo | rustup update + cargo install-update |

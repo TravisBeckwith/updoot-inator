@@ -92,7 +92,7 @@ while [[ $# -gt 0 ]]; do
             exit 0
             ;;
         -v|--version)
-            echo "update-all.sh version $VERSION"
+            echo "updoot-inator version $VERSION"
             exit 0
             ;;
         -n|--dry-run|--check|-c)
@@ -540,7 +540,7 @@ update_pip() {
             success "$pkg upgraded"
             PIP_SUCCESS=$((PIP_SUCCESS + 1))
         else
-            warn "Failed to upgrade $pkg (dependency conflict?)"
+            warn "Failed to upgrade $pkg (build error, dependency conflict, or missing system libs — run: pip install --upgrade $pkg for details)"
             PIP_FAILED=$((PIP_FAILED + 1))
         fi
     done
