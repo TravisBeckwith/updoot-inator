@@ -7,7 +7,7 @@ A single command to update everything on your system — apt, snap, flatpak, bre
 ## Install
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/updoot-inator.git
+git clone https://github.com/TravisBeckwith/updoot-inator.git
 sudo ln -s $(pwd)/updoot-inator/updoot-inator /usr/local/bin/updoot-inator
 
 # Update everything
