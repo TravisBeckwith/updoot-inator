@@ -9,7 +9,7 @@ A single command to update everything on your system — apt, snap, flatpak, bre
 ```bash
 git clone https://github.com/TravisBeckwith/updoot-inator.git
 cd updoot-inator
-bash ./install.sh
+./install.sh
 ```
 
 Or manually:

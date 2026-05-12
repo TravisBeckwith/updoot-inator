@@ -7,23 +7,22 @@ RED='\033[0;31m'
 NC='\033[0m'
 
 INSTALL_DIR="/usr/local/bin"
-SCRIPT_FILE="updoot-inator.sh"
-LINK_NAME="updoot-inator"
-SOURCE="$(cd "$(dirname "$0")" && pwd)/$SCRIPT_FILE"
+SCRIPT_NAME="updoot-inator"
+SOURCE="$(cd "$(dirname "$0")" && pwd)/$SCRIPT_NAME"
 
 if [ ! -f "$SOURCE" ]; then
-    echo -e "${RED}Error: $SCRIPT_FILE not found in $(dirname "$0")${NC}"
+    echo -e "${RED}Error: $SCRIPT_NAME not found in current directory${NC}"
     exit 1
 fi
 
-echo "Installing $LINK_NAME to $INSTALL_DIR..."
+echo "Installing $SCRIPT_NAME to $INSTALL_DIR..."
+
+if [ -w "$INSTALL_DIR" ]; then
+    ln -sf "$SOURCE" "$INSTALL_DIR/$SCRIPT_NAME"
+else
+    sudo ln -sf "$SOURCE" "$INSTALL_DIR/$SCRIPT_NAME"
+fi
 
 chmod +x "$SOURCE"
 
-if [ -w "$INSTALL_DIR" ]; then
-    ln -sf "$SOURCE" "$INSTALL_DIR/$LINK_NAME"
-else
-    sudo ln -sf "$SOURCE" "$INSTALL_DIR/$LINK_NAME"
-fi
-
-echo -e "${GREEN}✔ Installed! Run '$LINK_NAME --help' to get started 🎺💀${NC}"
+echo -e "${GREEN}✔ Installed! Run 'updoot-inator --help' to get started 🎺💀${NC}"
