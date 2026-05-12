@@ -86,7 +86,7 @@ EOF
 # ARGUMENT PARSING
 # =============================================================================
 while [[ $# -gt 0 ]]; do
-    case "\$1" in
+    case "$1" in
         -h|--help)
             usage
             exit 0
