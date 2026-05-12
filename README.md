@@ -8,8 +8,22 @@ A single command to update everything on your system — apt, snap, flatpak, bre
 
 ```bash
 git clone https://github.com/TravisBeckwith/updoot-inator.git
-sudo ln -s $(pwd)/updoot-inator/updoot-inator /usr/local/bin/updoot-inator
+cd updoot-inator
+./install.sh
+```
 
+Or manually:
+
+```bash
+git clone https://github.com/TravisBeckwith/updoot-inator.git
+cd updoot-inator
+chmod +x updoot-inator.sh
+sudo ln -sf "$(pwd)/updoot-inator.sh" /usr/local/bin/updoot-inator
+```
+
+## Usage
+
+```bash
 # Update everything
 updoot-inator
 
@@ -33,32 +47,44 @@ updoot-inator --log ~/update.log
 
 # List detected package managers
 updoot-inator --list
+```
 
-Options
-Option	Description
--h, --help	Show help message
--v, --version	Show version
--n, --dry-run	Show what would happen without making changes
--i, --interactive	Prompt before each package manager
--V, --verbose	Show detailed command output
--l, --log <file>	Log output to a file
--o, --only <list>	Only update specified managers (comma-separated)
--s, --skip <list>	Skip specified managers (comma-separated)
--L, --list	List detected package managers
--c, --check	Check for updates without installing
--b, --backup	Save package lists before updating
---backup-dir <dir>	Custom backup directory
---reboot-check	Check if reboot is needed after updates
---show-sizes	Show disk usage before/after
---no-color	Disable colored output
-Supported Package Managers
-Manager	What it does
- apt	update, upgrade, autoremove, autoclean
- snap	snap refresh
- flatpak	flatpak update
- brew	update, upgrade, cleanup
- conda	Updates base + all named environments
- pip	Upgrades all outdated packages individually
- npm	npm update -g
- cargo	rustup update + cargo install-update
- firmware	fwupdmgr check + update
+## Options
+
+| Option | Description |
+| --- | --- |
+| `-h, --help` | Show help message |
+| `-v, --version` | Show version |
+| `-n, --dry-run` | Show what would happen without making changes |
+| `-i, --interactive` | Prompt before each package manager |
+| `-V, --verbose` | Show detailed command output |
+| `-l, --log <file>` | Log output to a file |
+| `-o, --only <list>` | Only update specified managers (comma-separated) |
+| `-s, --skip <list>` | Skip specified managers (comma-separated) |
+| `-L, --list` | List detected package managers |
+| `-c, --check` | Check for updates without installing |
+| `-b, --backup` | Save package lists before updating |
+| `--backup-dir <dir>` | Custom backup directory |
+| `--reboot-check` | Check if reboot is needed after updates |
+| `--show-sizes` | Show disk usage before/after |
+| `--no-color` | Disable colored output |
+
+## Supported Package Managers
+
+| Manager | What it does |
+| --- | --- |
+| apt | update, upgrade, autoremove, autoclean |
+| snap | snap refresh |
+| flatpak | flatpak update |
+| brew | update, upgrade, cleanup |
+| conda | Updates base + all named environments |
+| pip | Upgrades all outdated packages individually |
+| npm | npm update -g |
+| cargo | rustup update + cargo install-update |
+| firmware | fwupdmgr check + update |
+
+## Uninstall
+
+```bash
+./uninstall.sh
+```
