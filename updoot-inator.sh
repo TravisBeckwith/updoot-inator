@@ -108,15 +108,15 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         -l|--log)
-            LOG_FILE="\$2"
+            LOG_FILE="$2"
             shift 2
             ;;
         -o|--only)
-            IFS=',' read -ra ONLY <<< "\$2"
+            IFS=',' read -ra ONLY <<< "$2"
             shift 2
             ;;
         -s|--skip)
-            IFS=',' read -ra SKIP <<< "\$2"
+            IFS=',' read -ra SKIP <<< "$2"
             shift 2
             ;;
         -L|--list)
@@ -137,7 +137,7 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --backup-dir)
-            BACKUP_DIR="\$2"
+            BACKUP_DIR="$2"
             shift 2
             ;;
         --reboot-check)
@@ -172,7 +172,7 @@ divider() {
 }
 
 success()  { echo -e "${GREEN}✔ $1${NC}"; }
-warn()     { echo -e "${YELLOW}⚠ $1${NC}"; WARNINGS+=("\$1"); }
+warn()     { echo -e "${YELLOW}⚠ $1${NC}"; WARNINGS+=("$1"); }
 error()    { echo -e "${RED}✘ $1${NC}"; }
 info()     { echo -e "${CYAN}ℹ $1${NC}"; }
 dry_info() { echo -e "${YELLOW}[DRY-RUN] $1${NC}"; }
@@ -186,7 +186,7 @@ log() {
 
 # Run a command or show what would run in dry-run mode
 run_cmd() {
-    local description="\$1"
+    local description="$1"
     shift
     local cmd="$*"
 
@@ -213,7 +213,7 @@ run_cmd() {
 
 # Check if a manager should be processed
 should_update() {
-    local manager="\$1"
+    local manager="$1"
 
     # Check --only filter
     if [ ${#ONLY[@]} -gt 0 ]; then
@@ -242,7 +242,7 @@ should_update() {
 
 # Prompt user in interactive mode
 confirm() {
-    local manager="\$1"
+    local manager="$1"
     if $INTERACTIVE; then
         echo -ne "${BOLD}Update ${manager}? [Y/n/q] ${NC}"
         read -r answer
@@ -257,7 +257,7 @@ confirm() {
 
 # Get disk usage of common paths
 get_disk_usage() {
-    df -h / | awk 'NR==2 {print \$3 " used / " \$2 " total (" \$5 " used)"}'
+    df -h / | awk 'NR==2 {print $3 " used / " $2 " total (" $5 " used)"}'
 }
 
 # =============================================================================
@@ -449,10 +449,10 @@ update_conda() {
         run_cmd "Update all base packages" "conda update -n base --all -y --dry-run"
         UPDATED+=("conda-base (dry-run)")
 
-        for env in $(conda env list | grep -v '^#' | grep -v '^base' | awk '{print $1}' | grep -v '^$'); do
+        while IFS= read -r env; do
             run_cmd "Update conda env '$env'" "conda update -n $env --all -y --dry-run"
             UPDATED+=("conda-$env (dry-run)")
-        done
+        done < <(conda env list | grep -v '^#' | grep -v '^base' | grep -v '^ *[*]' | awk '{print $1}' | grep -v '^$')
     else
         # Update conda itself
         if run_cmd "Update conda" "conda update -n base conda -y"; then
@@ -471,7 +471,7 @@ update_conda() {
         fi
 
         # Update other environments
-        for env in $(conda env list | grep -v '^#' | grep -v '^base' | awk '{print $1}' | grep -v '^$'); do
+        while IFS= read -r env; do
             echo -e "${YELLOW}Updating conda env: ${env}${NC}"
             if $INTERACTIVE; then
                 echo -ne "${BOLD}Update conda env '${env}'? [Y/n] ${NC}"
@@ -488,7 +488,7 @@ update_conda() {
                 FAILED+=("conda-$env")
                 error "Conda env '$env' update failed"
             fi
-        done
+        done < <(conda env list | grep -v '^#' | grep -v '^base' | grep -v '^ *[*]' | awk '{print $1}' | grep -v '^$')
     fi
 }
 
@@ -503,7 +503,7 @@ update_pip() {
     run_cmd "Upgrade pip" "pip install --upgrade pip" 2>/dev/null || true
 
     # Get outdated packages
-    OUTDATED=$(pip list --outdated --format=columns 2>/dev/null | awk 'NR>2 {print \$1}')
+    OUTDATED=$(pip list --outdated --format=columns 2>/dev/null | awk 'NR>2 {print $1}')
 
     if [ -z "$OUTDATED" ]; then
         success "All pip packages are up to date"
