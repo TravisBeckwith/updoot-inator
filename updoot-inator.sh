@@ -4,7 +4,7 @@
 # System-Wide Update Script
 # =============================================================================
 
-VERSION="1.2.0"
+VERSION="1.3.0"
 
 # Colors for output
 GREEN='\033[0;32m'
