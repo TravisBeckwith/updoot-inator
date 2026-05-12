@@ -565,7 +565,7 @@ update_npm() {
         run_cmd "List outdated global NPM packages" "npm outdated -g"
         UPDATED+=("npm (dry-run)")
     else
-        if run_cmd "Update global NPM packages" "npm update -g"; then
+        if run_cmd "Update global NPM packages" "sudo npm update -g --engine-strict false 2>&1 | grep -v EBADENGINE"; then
             UPDATED+=("npm")
             success "NPM global update complete"
         else
