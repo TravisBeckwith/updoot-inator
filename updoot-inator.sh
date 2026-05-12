@@ -450,7 +450,7 @@ update_conda() {
         UPDATED+=("conda-base (dry-run)")
 
         while IFS= read -r env; do
-            run_cmd "Update conda env '$env'" "conda update -n $env --all -y --dry-run"
+            run_cmd "Update conda env '$env'" "conda update $(if [[ "$env" == /* ]]; then echo -p; else echo -n; fi) $env --all -y --dry-run"
             UPDATED+=("conda-$env (dry-run)")
         done < <(conda env list | grep -v '^#' | grep -v '^base' | grep -v '^ *[*]' | awk '{print $1}' | grep -v '^$')
     else
@@ -481,7 +481,7 @@ update_conda() {
                     continue
                 fi
             fi
-            if run_cmd "Update conda env '$env'" "conda update -n $env --all -y"; then
+            if run_cmd "Update conda env '$env'" "conda update $(if [[ "$env" == /* ]]; then echo -p; else echo -n; fi) $env --all -y"; then
                 UPDATED+=("conda-$env")
                 success "Conda env '$env' updated"
             else
