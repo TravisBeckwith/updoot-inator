@@ -202,12 +202,14 @@ run_cmd() {
     else
         if $VERBOSE; then
             eval "$cmd" 2>&1 | tee -a "${LOG_FILE:-/dev/null}"
+            return ${PIPESTATUS[0]}
         elif [ -n "$LOG_FILE" ]; then
             eval "$cmd" >> "$LOG_FILE" 2>&1
+            return $?
         else
             eval "$cmd" 2>&1
+            return $?
         fi
-        return ${PIPESTATUS[0]}
     fi
 }
 
