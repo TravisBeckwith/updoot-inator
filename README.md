@@ -2,7 +2,7 @@
 
 *"Behold, the Updoot-inator! It updoots ALL your packages!"*
 
-![Version](https://img.shields.io/badge/version-1.3.0-blue)
+![Version](https://img.shields.io/badge/version-1.4.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20140581.svg)](https://doi.org/10.5281/zenodo.20140581)
 
@@ -22,7 +22,7 @@ Or manually:
 git clone https://github.com/TravisBeckwith/updoot-inator.git
 cd updoot-inator
 chmod +x updoot-inator.sh
-sudo ln -sf "$(pwd)/updoot-inator.sh" /usr/local/bin/updoot-inator
+sudo install -m 0755 updoot-inator.sh /usr/local/bin/updoot-inator
 ```
 
 ## Usage
@@ -31,8 +31,11 @@ sudo ln -sf "$(pwd)/updoot-inator.sh" /usr/local/bin/updoot-inator
 # Update everything
 updoot-inator
 
-# See what would be updated (no changes)
+# Print the commands that would run (nothing executed)
 updoot-inator --dry-run
+
+# Query each manager for available updates without installing
+updoot-inator --check
 
 # Interactive mode — prompt before each manager
 updoot-inator --interactive
@@ -62,7 +65,7 @@ updoot-inator --list
 | --- | --- |
 | `-h, --help` | Show help message |
 | `-v, --version` | Show version |
-| `-n, --dry-run` | Show what would happen without making changes |
+| `-n, --dry-run` | Print the commands that would run, without executing anything |
 | `-i, --interactive` | Prompt before each package manager |
 | `-V, --verbose` | Show detailed command output |
 | `-l, --log <file>` | Log output to a file |
@@ -85,7 +88,7 @@ updoot-inator --list
 | flatpak | flatpak update |
 | brew | update, upgrade, cleanup |
 | conda | Updates base + all named and path-based environments |
-| pip | Upgrades all outdated packages individually |
+| pip | Upgrades all outdated packages individually (skipped on PEP 668 externally-managed system Pythons) |
 | npm | npm update -g |
 | cargo | rustup update + cargo install-update |
 | firmware | fwupdmgr check + update |
@@ -94,4 +97,12 @@ updoot-inator --list
 
 ```bash
 bash ./uninstall.sh
+```
+
+## Updating
+
+```bash
+cd updoot-inator
+git pull
+bash ./install.sh   # re-copies the new version into /usr/local/bin
 ```
