@@ -4,7 +4,7 @@
 
 ![Version](https://img.shields.io/badge/version-1.4.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20140581.svg)](https://doi.org/10.5281/zenodo.20140581)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21197303.svg)](https://doi.org/10.5281/zenodo.21197303)
 
 A single command to update everything on your system — apt, snap, flatpak, brew, conda, pip, npm, cargo, and firmware.
 
