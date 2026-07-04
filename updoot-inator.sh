@@ -1,10 +1,10 @@
 #!/bin/bash
 
 # =============================================================================
-# System-Wide Update Script
+# updoot-inator — System-Wide Update Script
 # =============================================================================
 
-VERSION="1.3.0"
+VERSION="1.4.0"
 
 # Colors for output
 GREEN='\033[0;32m'
@@ -17,12 +17,12 @@ NC='\033[0m'
 
 # Defaults
 DRY_RUN=false
+CHECK_MODE=false
 VERBOSE=false
 LOG_FILE=""
 INTERACTIVE=false
 ONLY=()
 SKIP=()
-PARALLEL=false
 REBOOT_CHECK=false
 SHOW_SIZES=false
 BACKUP_LIST=false
@@ -42,23 +42,26 @@ usage() {
     cat << 'EOF'
 
   ╔═══════════════════════════════════════════════════════════════════╗
-  ║                   System-Wide Update Script                      ║
+  ║                          updoot-inator                            ║
   ╚═══════════════════════════════════════════════════════════════════╝
 
   USAGE:
-      update-all.sh [OPTIONS]
+      updoot-inator [OPTIONS]
 
   OPTIONS:
       -h, --help              Show this help message
       -v, --version           Show script version
-      -n, --dry-run           Show what would be updated without making changes
+      -n, --dry-run           Print the commands that would run (no changes,
+                              nothing is executed)
+      -c, --check             Actually query each manager for available
+                              updates without installing anything (may
+                              refresh package metadata, e.g. 'apt update')
       -i, --interactive       Prompt before each package manager update
       -V, --verbose           Show detailed output for each command
       -l, --log <file>        Log all output to a file
       -o, --only <managers>   Only update specified managers (comma-separated)
       -s, --skip <managers>   Skip specified managers (comma-separated)
       -L, --list              List all available package managers detected
-      -c, --check             Check for updates without installing (like dry-run)
       -b, --backup            Save list of installed packages before updating
       --backup-dir <dir>      Directory for backup files (default: ~/.update-backups)
       --reboot-check          Check if a reboot is required after updates
@@ -69,15 +72,15 @@ usage() {
       apt, snap, flatpak, brew, conda, pip, npm, cargo, firmware
 
   EXAMPLES:
-      update-all.sh                           # Update everything
-      update-all.sh --dry-run                 # See what would be updated
-      update-all.sh --only apt,pip            # Only update apt and pip
-      update-all.sh --skip conda,npm          # Skip conda and npm
-      update-all.sh --interactive             # Ask before each manager
-      update-all.sh --log ~/update.log        # Log output to file
-      update-all.sh --backup --only apt       # Backup apt packages then update
-      update-all.sh -n -V                     # Dry run with verbose output
-      update-all.sh --check                   # Just check what's outdated
+      updoot-inator                           # Update everything
+      updoot-inator --dry-run                 # Print what would run
+      updoot-inator --check                   # Query for available updates
+      updoot-inator --only apt,pip            # Only update apt and pip
+      updoot-inator --skip conda,npm          # Skip conda and npm
+      updoot-inator --interactive             # Ask before each manager
+      updoot-inator --log ~/update.log        # Log output to file
+      updoot-inator --backup --only apt       # Backup apt packages then update
+      updoot-inator -n -V                     # Dry run with verbose output
 
 EOF
 }
@@ -95,8 +98,12 @@ while [[ $# -gt 0 ]]; do
             echo "updoot-inator version $VERSION"
             exit 0
             ;;
-        -n|--dry-run|--check|-c)
+        -n|--dry-run)
             DRY_RUN=true
+            shift
+            ;;
+        -c|--check)
+            CHECK_MODE=true
             shift
             ;;
         -i|--interactive)
@@ -160,6 +167,11 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Dry-run wins if both are given (it is the more conservative mode)
+if $DRY_RUN && $CHECK_MODE; then
+    CHECK_MODE=false
+fi
+
 # =============================================================================
 # UTILITY FUNCTIONS
 # =============================================================================
@@ -184,32 +196,31 @@ log() {
     fi
 }
 
-# Run a command or show what would run in dry-run mode
+# Run a command (passed as separate arguments, NOT a string — no eval, so
+# package/environment names can never be interpreted as shell syntax),
+# or show what would run in dry-run mode.
 run_cmd() {
     local description="$1"
     shift
-    local cmd="$*"
 
     if $VERBOSE; then
-        info "Running: $cmd"
+        info "Running: $*"
     fi
-    log "Running: $cmd"
+    log "Running: $*"
 
     if $DRY_RUN; then
         dry_info "$description"
-        dry_info "  → $cmd"
+        dry_info "  → $*"
         return 0
+    fi
+
+    if $VERBOSE; then
+        "$@" 2>&1 | tee -a "${LOG_FILE:-/dev/null}"
+        return "${PIPESTATUS[0]}"
+    elif [ -n "$LOG_FILE" ]; then
+        "$@" >> "$LOG_FILE" 2>&1
     else
-        if $VERBOSE; then
-            eval "$cmd" 2>&1 | tee -a "${LOG_FILE:-/dev/null}"
-            return ${PIPESTATUS[0]}
-        elif [ -n "$LOG_FILE" ]; then
-            eval "$cmd" >> "$LOG_FILE" 2>&1
-            return $?
-        else
-            eval "$cmd" 2>&1
-            return $?
-        fi
+        "$@"
     fi
 }
 
@@ -257,7 +268,7 @@ confirm() {
     return 0
 }
 
-# Get disk usage of common paths
+# Get disk usage of root filesystem
 get_disk_usage() {
     df -h / | awk 'NR==2 {print $3 " used / " $2 " total (" $5 " used)"}'
 }
@@ -270,6 +281,7 @@ backup_packages() {
 
     divider "Backing up package lists"
     mkdir -p "$BACKUP_DIR"
+
     local timestamp
     timestamp=$(date '+%Y%m%d_%H%M%S')
 
@@ -338,6 +350,84 @@ check_disk_after() {
 }
 
 # =============================================================================
+# HELPER WRAPPERS
+# (run_cmd executes argument vectors, so anything needing pipes or
+#  redirections lives in a small named function with explicit exit status)
+# =============================================================================
+
+apt_list_upgradable() {
+    apt list --upgradable 2>/dev/null
+}
+
+# npm needs sudo only when the global prefix is not writable by this user
+npm_needs_sudo() {
+    local prefix
+    prefix=$(npm config get prefix 2>/dev/null)
+    [ -n "$prefix" ] && [ ! -w "$prefix/lib/node_modules" ]
+}
+
+# Update global npm packages, hiding non-actionable EBADENGINE warnings
+# while preserving npm's own exit status (the old pipe-through-grep
+# approach returned grep's status instead).
+npm_global_update() {
+    local out status
+    if npm_needs_sudo; then
+        out=$(sudo npm update -g 2>&1)
+    else
+        out=$(npm update -g 2>&1)
+    fi
+    status=$?
+    if [ -n "$out" ]; then
+        printf '%s\n' "$out" | grep -v 'EBADENGINE' || true
+    fi
+    return $status
+}
+
+# npm outdated exits 1 whenever outdated packages exist; for a listing
+# that is not a failure.
+npm_list_outdated() {
+    npm outdated -g || true
+}
+
+# Detect PEP 668 externally-managed Python (Debian 12+, Ubuntu 23.04+,
+# Fedora 38+ …). In those environments 'pip install --upgrade' into the
+# system interpreter is refused and force-overriding it can break the OS.
+pip_is_externally_managed() {
+    python3 - <<'PY' 2>/dev/null
+import os, sys, sysconfig
+# Inside a virtualenv → pip is safe to use
+if sys.prefix != getattr(sys, "base_prefix", sys.prefix):
+    sys.exit(1)
+# Inside a conda env → pip belongs to conda, not the OS
+if os.environ.get("CONDA_PREFIX"):
+    sys.exit(1)
+marker = os.path.join(sysconfig.get_path("stdlib"), "EXTERNALLY-MANAGED")
+sys.exit(0 if os.path.exists(marker) else 1)
+PY
+}
+
+# Enumerate conda environment prefixes (excluding base) via JSON.
+# Parsing 'conda env list' text output broke on path-based envs and on
+# any prefix containing spaces; JSON + python (which conda guarantees
+# to exist) is robust. Base is excluded by prefix comparison instead of
+# 'grep -v ^base', which also wrongly excluded envs like 'baseline'.
+conda_env_prefixes() {
+    local base
+    base=$(conda info --base 2>/dev/null)
+    conda env list --json 2>/dev/null | python3 -c '
+import json, sys
+base = sys.argv[1]
+for p in json.load(sys.stdin).get("envs", []):
+    if p and p != base:
+        print(p)
+' "$base" 2>/dev/null
+}
+
+fwupd_refresh() {
+    fwupdmgr refresh --force 2>/dev/null || true
+}
+
+# =============================================================================
 # PACKAGE MANAGER UPDATES
 # =============================================================================
 
@@ -349,17 +439,22 @@ update_apt() {
     divider "Updating APT packages"
 
     if $DRY_RUN; then
-        run_cmd "Update APT package lists" "sudo apt update"
-        run_cmd "List upgradable packages" "apt list --upgradable 2>/dev/null"
-        run_cmd "Upgrade APT packages" "sudo apt upgrade -y"
-        run_cmd "Remove unused packages" "sudo apt autoremove -y"
-        run_cmd "Clean APT cache" "sudo apt autoclean"
+        run_cmd "Update APT package lists" sudo apt update
+        run_cmd "List upgradable packages" apt_list_upgradable
+        run_cmd "Upgrade APT packages" sudo apt upgrade -y
+        run_cmd "Remove unused packages" sudo apt autoremove -y
+        run_cmd "Clean APT cache" sudo apt autoclean
         UPDATED+=("apt (dry-run)")
+    elif $CHECK_MODE; then
+        run_cmd "Update APT package lists" sudo apt update
+        echo -e "${CYAN}Upgradable APT packages:${NC}"
+        run_cmd "List upgradable packages" apt_list_upgradable
+        UPDATED+=("apt (checked)")
     else
-        if run_cmd "Update APT package lists" "sudo apt update" && \
-           run_cmd "Upgrade APT packages" "sudo apt upgrade -y" && \
-           run_cmd "Remove unused packages" "sudo apt autoremove -y" && \
-           run_cmd "Clean APT cache" "sudo apt autoclean"; then
+        if run_cmd "Update APT package lists" sudo apt update && \
+           run_cmd "Upgrade APT packages" sudo apt upgrade -y && \
+           run_cmd "Remove unused packages" sudo apt autoremove -y && \
+           run_cmd "Clean APT cache" sudo apt autoclean; then
             UPDATED+=("apt")
             success "APT update complete"
             log "APT update complete"
@@ -379,10 +474,13 @@ update_snap() {
     divider "Updating Snap packages"
 
     if $DRY_RUN; then
-        run_cmd "Refresh snap packages" "sudo snap refresh"
+        run_cmd "Refresh snap packages" sudo snap refresh
         UPDATED+=("snap (dry-run)")
+    elif $CHECK_MODE; then
+        run_cmd "List pending snap updates" snap refresh --list
+        UPDATED+=("snap (checked)")
     else
-        if run_cmd "Refresh snap packages" "sudo snap refresh"; then
+        if run_cmd "Refresh snap packages" sudo snap refresh; then
             UPDATED+=("snap")
             success "Snap update complete"
         else
@@ -400,10 +498,13 @@ update_flatpak() {
     divider "Updating Flatpak packages"
 
     if $DRY_RUN; then
-        run_cmd "Check flatpak updates" "flatpak remote-ls --updates"
+        run_cmd "Update flatpak packages" flatpak update -y
         UPDATED+=("flatpak (dry-run)")
+    elif $CHECK_MODE; then
+        run_cmd "Check flatpak updates" flatpak remote-ls --updates
+        UPDATED+=("flatpak (checked)")
     else
-        if run_cmd "Update flatpak packages" "flatpak update -y"; then
+        if run_cmd "Update flatpak packages" flatpak update -y; then
             UPDATED+=("flatpak")
             success "Flatpak update complete"
         else
@@ -421,15 +522,20 @@ update_brew() {
     divider "Updating Homebrew packages"
 
     if $DRY_RUN; then
-        run_cmd "Update Homebrew" "brew update"
-        run_cmd "List outdated formulae" "brew outdated"
-        run_cmd "Upgrade Homebrew packages" "brew upgrade"
-        run_cmd "Cleanup Homebrew" "brew cleanup"
+        run_cmd "Update Homebrew" brew update
+        run_cmd "List outdated formulae" brew outdated
+        run_cmd "Upgrade Homebrew packages" brew upgrade
+        run_cmd "Cleanup Homebrew" brew cleanup
         UPDATED+=("brew (dry-run)")
+    elif $CHECK_MODE; then
+        run_cmd "Update Homebrew" brew update
+        echo -e "${CYAN}Outdated Homebrew formulae:${NC}"
+        run_cmd "List outdated formulae" brew outdated
+        UPDATED+=("brew (checked)")
     else
-        if run_cmd "Update Homebrew" "brew update" && \
-           run_cmd "Upgrade Homebrew packages" "brew upgrade" && \
-           run_cmd "Cleanup Homebrew" "brew cleanup"; then
+        if run_cmd "Update Homebrew" brew update && \
+           run_cmd "Upgrade Homebrew packages" brew upgrade && \
+           run_cmd "Cleanup Homebrew" brew cleanup; then
             UPDATED+=("brew")
             success "Homebrew update complete"
         else
@@ -444,28 +550,35 @@ update_conda() {
     if ! should_update "conda"; then return; fi
     if ! confirm "conda"; then return; fi
 
-    divider "Updating Conda (base environment)"
+    divider "Updating Conda environments"
 
     if $DRY_RUN; then
-        run_cmd "Update conda itself" "conda update -n base conda -y --dry-run"
-        run_cmd "Update all base packages" "conda update -n base --all -y --dry-run"
+        run_cmd "Update conda itself" conda update -n base conda -y --dry-run
+        run_cmd "Update all base packages" conda update -n base --all -y --dry-run
         UPDATED+=("conda-base (dry-run)")
 
         while IFS= read -r env; do
-            local env_flag="-n"; [[ "$env" == /* ]] && env_flag="-p"
-            run_cmd "Update conda env '$env'" "conda update $env_flag $env --all -y --dry-run"
-            UPDATED+=("conda-$env (dry-run)")
-        done < <(conda env list | grep -v '^#' | grep -v '^base' | grep -v '^ *[*]' | awk '{print $1}' | grep -v '^$')
+            run_cmd "Update conda env '$(basename "$env")'" conda update -p "$env" --all -y --dry-run
+            UPDATED+=("conda-$(basename "$env") (dry-run)")
+        done < <(conda_env_prefixes)
+    elif $CHECK_MODE; then
+        run_cmd "Check conda base updates" conda update -n base --all -y --dry-run
+        UPDATED+=("conda-base (checked)")
+
+        while IFS= read -r env; do
+            run_cmd "Check conda env '$(basename "$env")'" conda update -p "$env" --all -y --dry-run
+            UPDATED+=("conda-$(basename "$env") (checked)")
+        done < <(conda_env_prefixes)
     else
         # Update conda itself
-        if run_cmd "Update conda" "conda update -n base conda -y"; then
+        if run_cmd "Update conda" conda update -n base conda -y; then
             success "Conda self-update complete"
         else
             warn "Conda self-update had issues"
         fi
 
         # Update base environment
-        if run_cmd "Update base packages" "conda update -n base --all -y"; then
+        if run_cmd "Update base packages" conda update -n base --all -y; then
             UPDATED+=("conda-base")
             success "Conda base environment update complete"
         else
@@ -473,26 +586,28 @@ update_conda() {
             error "Conda base environment update failed"
         fi
 
-        # Update other environments
+        # Update other environments (by prefix, so path-based envs and
+        # prefixes containing spaces are handled correctly)
         while IFS= read -r env; do
-            echo -e "${YELLOW}Updating conda env: ${env}${NC}"
+            local name
+            name=$(basename "$env")
+            echo -e "${YELLOW}Updating conda env: ${name} (${env})${NC}"
             if $INTERACTIVE; then
-                echo -ne "${BOLD}Update conda env '${env}'? [Y/n] ${NC}"
+                echo -ne "${BOLD}Update conda env '${name}'? [Y/n] ${NC}"
                 read -r answer
                 if [[ "$answer" =~ ^[nN] ]]; then
-                    SKIPPED+=("conda-$env (user declined)")
+                    SKIPPED+=("conda-$name (user declined)")
                     continue
                 fi
             fi
-            local env_flag="-n"; [[ "$env" == /* ]] && env_flag="-p"
-            if run_cmd "Update conda env '$env'" "conda update $env_flag $env --all -y"; then
-                UPDATED+=("conda-$env")
-                success "Conda env '$env' updated"
+            if run_cmd "Update conda env '$name'" conda update -p "$env" --all -y; then
+                UPDATED+=("conda-$name")
+                success "Conda env '$name' updated"
             else
-                FAILED+=("conda-$env")
-                error "Conda env '$env' update failed"
+                FAILED+=("conda-$name")
+                error "Conda env '$name' update failed"
             fi
-        done < <(conda env list | grep -v '^#' | grep -v '^base' | grep -v '^ *[*]' | awk '{print $1}' | grep -v '^$')
+        done < <(conda_env_prefixes)
     fi
 }
 
@@ -503,8 +618,31 @@ update_pip() {
 
     divider "Updating pip packages"
 
-    # Upgrade pip itself
-    run_cmd "Upgrade pip" "pip install --upgrade pip" 2>/dev/null || true
+    # PEP 668: refuse to fight the OS package manager for its Python
+    if pip_is_externally_managed; then
+        warn "System Python is externally managed (PEP 668) — skipping pip."
+        info "Use a virtualenv, pipx, or your distro's packages instead."
+        SKIPPED+=("pip (externally-managed environment)")
+        return
+    fi
+
+    if [ -n "$CONDA_PREFIX" ]; then
+        info "Note: a conda environment is active — 'pip' here operates inside '$CONDA_PREFIX'."
+    fi
+
+    if $DRY_RUN; then
+        run_cmd "Upgrade pip" pip install --upgrade pip
+        dry_info "Would list outdated pip packages and upgrade each one"
+        UPDATED+=("pip (dry-run)")
+        return
+    fi
+
+    # Upgrade pip itself (skipped in check mode — check installs nothing)
+    if ! $CHECK_MODE; then
+        if ! run_cmd "Upgrade pip" pip install --upgrade pip; then
+            warn "pip self-upgrade failed — continuing with current version"
+        fi
+    fi
 
     # Get outdated packages
     OUTDATED=$(pip list --outdated --format=columns 2>/dev/null | awk 'NR>2 {print $1}')
@@ -519,17 +657,15 @@ update_pip() {
     pip list --outdated --format=columns 2>/dev/null
     echo ""
 
-    if $DRY_RUN; then
-        for pkg in $OUTDATED; do
-            dry_info "Would upgrade: $pkg"
-        done
-        UPDATED+=("pip (dry-run)")
+    if $CHECK_MODE; then
+        UPDATED+=("pip (checked)")
         return
     fi
 
     PIP_FAILED=0
     PIP_SUCCESS=0
-    for pkg in $OUTDATED; do
+    while IFS= read -r pkg; do
+        [ -z "$pkg" ] && continue
         if $INTERACTIVE; then
             echo -ne "${BOLD}Upgrade ${pkg}? [Y/n] ${NC}"
             read -r answer
@@ -540,14 +676,14 @@ update_pip() {
         fi
 
         echo -e "${YELLOW}Upgrading: ${pkg}${NC}"
-        if run_cmd "Upgrade $pkg" "pip install --upgrade $pkg"; then
+        if run_cmd "Upgrade $pkg" pip install --upgrade "$pkg"; then
             success "$pkg upgraded"
             PIP_SUCCESS=$((PIP_SUCCESS + 1))
         else
             warn "Failed to upgrade $pkg (build error, dependency conflict, or missing system libs — run: pip install --upgrade $pkg for details)"
             PIP_FAILED=$((PIP_FAILED + 1))
         fi
-    done
+    done <<< "$OUTDATED"
 
     if [ $PIP_FAILED -eq 0 ]; then
         UPDATED+=("pip ($PIP_SUCCESS packages)")
@@ -566,10 +702,14 @@ update_npm() {
     divider "Updating global NPM packages"
 
     if $DRY_RUN; then
-        run_cmd "List outdated global NPM packages" "npm outdated -g"
+        run_cmd "Update global NPM packages" npm update -g
         UPDATED+=("npm (dry-run)")
+    elif $CHECK_MODE; then
+        echo -e "${CYAN}Outdated global NPM packages:${NC}"
+        run_cmd "List outdated global NPM packages" npm_list_outdated
+        UPDATED+=("npm (checked)")
     else
-        if run_cmd "Update global NPM packages" "sudo npm update -g --engine-strict false 2>&1 | grep -v EBADENGINE"; then
+        if run_cmd "Update global NPM packages" npm_global_update; then
             UPDATED+=("npm")
             success "NPM global update complete"
         else
@@ -591,10 +731,13 @@ update_cargo() {
 
     if command -v rustup &> /dev/null; then
         if $DRY_RUN; then
-            run_cmd "Update Rust toolchain" "rustup check"
+            run_cmd "Update Rust toolchain" rustup update
             UPDATED+=("rustup (dry-run)")
+        elif $CHECK_MODE; then
+            run_cmd "Check Rust toolchain updates" rustup check
+            UPDATED+=("rustup (checked)")
         else
-            if run_cmd "Update Rust toolchain" "rustup update"; then
+            if run_cmd "Update Rust toolchain" rustup update; then
                 UPDATED+=("rustup")
                 success "Rust toolchain updated"
             else
@@ -607,10 +750,13 @@ update_cargo() {
     if command -v cargo &> /dev/null; then
         if command -v cargo-install-update &> /dev/null; then
             if $DRY_RUN; then
-                run_cmd "Check cargo package updates" "cargo install-update -a --list"
+                run_cmd "Update cargo packages" cargo install-update -a
                 UPDATED+=("cargo (dry-run)")
+            elif $CHECK_MODE; then
+                run_cmd "Check cargo package updates" cargo install-update -a --list
+                UPDATED+=("cargo (checked)")
             else
-                if run_cmd "Update cargo packages" "cargo install-update -a"; then
+                if run_cmd "Update cargo packages" cargo install-update -a; then
                     UPDATED+=("cargo")
                     success "Cargo packages updated"
                 else
@@ -631,19 +777,27 @@ update_firmware() {
 
     divider "Checking for firmware updates"
 
-    fwupdmgr refresh --force 2>/dev/null || true
-
     if $DRY_RUN; then
-        run_cmd "Check firmware updates" "fwupdmgr get-updates 2>/dev/null || echo 'No firmware updates available'"
+        run_cmd "Refresh firmware metadata" fwupd_refresh
+        run_cmd "Check firmware updates" fwupdmgr get-updates
         UPDATED+=("firmware (dry-run)")
+    elif $CHECK_MODE; then
+        fwupd_refresh
+        if run_cmd "Check firmware updates" fwupdmgr get-updates; then
+            warn "Firmware updates available. Run manually: sudo fwupdmgr update"
+        else
+            success "Firmware is up to date"
+        fi
+        UPDATED+=("firmware (checked)")
     else
+        fwupd_refresh
         if fwupdmgr get-updates 2>/dev/null; then
             echo ""
             if $INTERACTIVE; then
                 echo -ne "${BOLD}Install firmware updates? [y/N] ${NC}"
                 read -r answer
                 if [[ "$answer" =~ ^[yY] ]]; then
-                    run_cmd "Install firmware" "sudo fwupdmgr update"
+                    run_cmd "Install firmware" sudo fwupdmgr update
                 else
                     info "Firmware update skipped by user"
                 fi
@@ -681,15 +835,19 @@ check_reboot() {
 # SUMMARY
 # =============================================================================
 print_summary() {
-    END_TIME=$(date +%s)
-    ELAPSED=$((END_TIME - START_TIME))
-    MINUTES=$((ELAPSED / 60))
-    SECONDS=$((ELAPSED % 60))
+    local end_time elapsed mins secs
+    end_time=$(date +%s)
+    elapsed=$((end_time - START_TIME))
+    mins=$((elapsed / 60))
+    secs=$((elapsed % 60))
 
     divider "UPDATE SUMMARY"
 
     if $DRY_RUN; then
         echo -e "  ${YELLOW}${BOLD}*** DRY RUN — No changes were made ***${NC}"
+        echo ""
+    elif $CHECK_MODE; then
+        echo -e "  ${YELLOW}${BOLD}*** CHECK MODE — Nothing was installed ***${NC}"
         echo ""
     fi
 
@@ -725,7 +883,7 @@ print_summary() {
         echo ""
     fi
 
-    echo -e "${CYAN}Time elapsed: ${MINUTES}m ${SECONDS}s${NC}"
+    echo -e "${CYAN}Time elapsed: ${mins}m ${secs}s${NC}"
 
     if [ -n "$LOG_FILE" ]; then
         echo -e "${CYAN}Full log saved to: ${LOG_FILE}${NC}"
@@ -743,6 +901,11 @@ main() {
         echo ""
         echo -e "${YELLOW}${BOLD}══════════════════════════════════════════════════${NC}"
         echo -e "${YELLOW}${BOLD}  DRY RUN MODE — No changes will be made${NC}"
+        echo -e "${YELLOW}${BOLD}══════════════════════════════════════════════════${NC}"
+    elif $CHECK_MODE; then
+        echo ""
+        echo -e "${YELLOW}${BOLD}══════════════════════════════════════════════════${NC}"
+        echo -e "${YELLOW}${BOLD}  CHECK MODE — Querying for updates, installing nothing${NC}"
         echo -e "${YELLOW}${BOLD}══════════════════════════════════════════════════${NC}"
     fi
 

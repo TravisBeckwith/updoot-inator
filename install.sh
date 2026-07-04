@@ -8,7 +8,7 @@ NC='\033[0m'
 
 INSTALL_DIR="/usr/local/bin"
 SCRIPT_FILE="updoot-inator.sh"
-LINK_NAME="updoot-inator"
+BIN_NAME="updoot-inator"
 SOURCE="$(cd "$(dirname "$0")" && pwd)/$SCRIPT_FILE"
 
 if [ ! -f "$SOURCE" ]; then
@@ -16,14 +16,15 @@ if [ ! -f "$SOURCE" ]; then
     exit 1
 fi
 
-echo "Installing $LINK_NAME to $INSTALL_DIR..."
+echo "Installing $BIN_NAME to $INSTALL_DIR..."
 
-chmod +x "$SOURCE"
-
+# Copy (not symlink) so the installed command keeps working even if
+# this cloned directory is later moved or deleted. Re-run install.sh
+# after a 'git pull' to pick up a new version.
 if [ -w "$INSTALL_DIR" ]; then
-    ln -sf "$SOURCE" "$INSTALL_DIR/$LINK_NAME"
+    install -m 0755 "$SOURCE" "$INSTALL_DIR/$BIN_NAME"
 else
-    sudo ln -sf "$SOURCE" "$INSTALL_DIR/$LINK_NAME"
+    sudo install -m 0755 "$SOURCE" "$INSTALL_DIR/$BIN_NAME"
 fi
 
-echo -e "${GREEN}✔ Installed! Run '$LINK_NAME --help' to get started 🎺💀${NC}"
+echo -e "${GREEN}✔ Installed! Run '$BIN_NAME --help' to get started 🎺💀${NC}"
