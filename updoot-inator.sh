@@ -4,7 +4,7 @@
 # updoot-inator — System-Wide Update Script
 # =============================================================================
 
-VERSION="1.4.0"
+VERSION="1.6.0"
 
 # Colors for output
 GREEN='\033[0;32m'
@@ -27,6 +27,14 @@ REBOOT_CHECK=false
 SHOW_SIZES=false
 BACKUP_LIST=false
 BACKUP_DIR="$HOME/.update-backups"
+PIP_EXCLUDE=()
+# Packages that commonly require a native/source build (e.g. GUI toolkits
+# needing system dev headers like GTK+) and have no prebuilt wheel on many
+# platforms. Skipped by default to avoid multi-minute failing compiles;
+# add more with --pip-exclude, or disable this list with
+# --no-pip-exclude-defaults.
+PIP_EXCLUDE_DEFAULTS=(wxPython)
+USE_PIP_EXCLUDE_DEFAULTS=true
 
 # Track results
 UPDATED=()
@@ -67,6 +75,11 @@ usage() {
       --reboot-check          Check if a reboot is required after updates
       --show-sizes            Show disk usage before and after updates
       --no-color              Disable colored output
+      --pip-exclude <pkgs>    Comma-separated pip packages to skip upgrading
+      --no-pip-exclude-defaults
+                               Don't skip the built-in list of pip packages
+                               known to require a native source build
+                               (currently: wxPython)
 
   AVAILABLE MANAGERS:
       apt, snap, flatpak, brew, conda, pip, npm, cargo, firmware
@@ -157,6 +170,15 @@ while [[ $# -gt 0 ]]; do
             ;;
         --no-color)
             GREEN='' YELLOW='' RED='' BLUE='' CYAN='' BOLD='' NC=''
+            shift
+            ;;
+        --pip-exclude)
+            IFS=',' read -ra _pip_exclude_extra <<< "$2"
+            PIP_EXCLUDE+=("${_pip_exclude_extra[@]}")
+            shift 2
+            ;;
+        --no-pip-exclude-defaults)
+            USE_PIP_EXCLUDE_DEFAULTS=false
             shift
             ;;
         *)
@@ -428,6 +450,44 @@ fwupd_refresh() {
 }
 
 # =============================================================================
+# SUDO CREDENTIAL KEEP-ALIVE
+#
+# apt, snap, and (conditionally) npm each call sudo cold, with nothing
+# keeping the cached sudo timestamp alive in between. Non-sudo steps in the
+# same run — conda solving environments, pip upgrading packages one at a
+# time — can easily run longer than sudo's default timestamp_timeout
+# (5-15 min depending on distro), so a later sudo call prompts for the
+# password again even though you already authenticated earlier in the run.
+#
+# Fix: prompt once up front, then refresh the cached credential every 60s
+# in the background for the lifetime of the run. Skipped entirely in
+# --dry-run, since nothing is actually executed there.
+# =============================================================================
+SUDO_KEEPALIVE_PID=""
+
+sudo_keepalive_start() {
+    $DRY_RUN && return
+    command -v sudo &> /dev/null || return
+
+    # If this fails (no tty, no cached credential, passwordless sudo not
+    # configured), just continue — individual sudo calls will prompt or
+    # fail on their own, exactly as before this fix existed.
+    sudo -v 2>/dev/null || return
+
+    ( while true; do sudo -n -v 2>/dev/null; sleep 60; done ) &
+    SUDO_KEEPALIVE_PID=$!
+    trap 'sudo_keepalive_stop' EXIT
+}
+
+sudo_keepalive_stop() {
+    if [ -n "$SUDO_KEEPALIVE_PID" ]; then
+        kill "$SUDO_KEEPALIVE_PID" 2>/dev/null
+        wait "$SUDO_KEEPALIVE_PID" 2>/dev/null
+        SUDO_KEEPALIVE_PID=""
+    fi
+}
+
+# =============================================================================
 # PACKAGE MANAGER UPDATES
 # =============================================================================
 
@@ -611,6 +671,78 @@ update_conda() {
     fi
 }
 
+is_pip_excluded() {
+    local pkg="$1" excluded
+    for excluded in "${PIP_EXCLUDE[@]}"; do
+        [[ "${pkg,,}" == "${excluded,,}" ]] && return 0
+    done
+    if $USE_PIP_EXCLUDE_DEFAULTS; then
+        for excluded in "${PIP_EXCLUDE_DEFAULTS[@]}"; do
+            [[ "${pkg,,}" == "${excluded,,}" ]] && return 0
+        done
+    fi
+    return 1
+}
+
+# Checks whether upgrading pkg ($1) to version ($2) would violate another
+# installed package's pinned requirement, without installing anything.
+# pip's own "dependency resolver" conflict warning only appears *after* it
+# has already performed the upgrade, which is too late to prevent it — so
+# this inspects installed packages' declared requirements directly instead.
+# Prints the conflicting requirement line(s) on stdout.
+# Exit codes: 0 = no conflict, 1 = conflict found, 2 = could not determine
+# (e.g. no usable requirement-parsing library available) — callers should
+# treat 2 the same as "no conflict" rather than blocking the upgrade.
+pip_would_conflict() {
+    local pkg="$1" target="$2"
+    python3 - "$pkg" "$target" <<'PYEOF'
+import sys
+try:
+    from importlib import metadata
+except ImportError:
+    sys.exit(2)
+try:
+    from packaging.requirements import Requirement
+    from packaging.utils import canonicalize_name
+except ImportError:
+    try:
+        from pip._vendor.packaging.requirements import Requirement
+        from pip._vendor.packaging.utils import canonicalize_name
+    except ImportError:
+        sys.exit(2)
+
+pkg, target = sys.argv[1], sys.argv[2]
+pkg_norm = canonicalize_name(pkg)
+conflicts = []
+for dist in metadata.distributions():
+    try:
+        name = dist.metadata['Name']
+        reqs = dist.requires or []
+    except Exception:
+        continue
+    if not name:
+        continue
+    for r in reqs:
+        try:
+            req = Requirement(r)
+        except Exception:
+            continue
+        if req.marker is not None:
+            try:
+                if not req.marker.evaluate():
+                    continue
+            except Exception:
+                pass
+        if canonicalize_name(req.name) == pkg_norm and req.specifier and not req.specifier.contains(target, prereleases=True):
+            conflicts.append(f"{name} requires {pkg}{req.specifier}, but you have {pkg} {target} which is incompatible.")
+
+if conflicts:
+    print("\n".join(conflicts))
+    sys.exit(1)
+sys.exit(0)
+PYEOF
+}
+
 update_pip() {
     if ! command -v pip &> /dev/null; then SKIPPED+=("pip"); return; fi
     if ! should_update "pip"; then return; fi
@@ -633,6 +765,10 @@ update_pip() {
     if $DRY_RUN; then
         run_cmd "Upgrade pip" pip install --upgrade pip
         dry_info "Would list outdated pip packages and upgrade each one"
+        if $USE_PIP_EXCLUDE_DEFAULTS && [ ${#PIP_EXCLUDE_DEFAULTS[@]} -gt 0 ]; then
+            dry_info "Would skip (default excludes): ${PIP_EXCLUDE_DEFAULTS[*]}"
+        fi
+        [ ${#PIP_EXCLUDE[@]} -gt 0 ] && dry_info "Would skip (--pip-exclude): ${PIP_EXCLUDE[*]}"
         UPDATED+=("pip (dry-run)")
         return
     fi
@@ -644,8 +780,8 @@ update_pip() {
         fi
     fi
 
-    # Get outdated packages
-    OUTDATED=$(pip list --outdated --format=columns 2>/dev/null | awk 'NR>2 {print $1}')
+    # Get outdated packages (name + latest available version)
+    OUTDATED=$(pip list --outdated --format=columns 2>/dev/null | awk 'NR>2 {print $1, $3}')
 
     if [ -z "$OUTDATED" ]; then
         success "All pip packages are up to date"
@@ -664,13 +800,32 @@ update_pip() {
 
     PIP_FAILED=0
     PIP_SUCCESS=0
-    while IFS= read -r pkg; do
+    PIP_SKIPPED=0
+    while IFS=' ' read -r pkg target; do
         [ -z "$pkg" ] && continue
+
+        if is_pip_excluded "$pkg"; then
+            info "Skipped $pkg (excluded — often needs a native/source build; use --no-pip-exclude-defaults or --pip-exclude to change this)"
+            PIP_SKIPPED=$((PIP_SKIPPED + 1))
+            continue
+        fi
+
         if $INTERACTIVE; then
             echo -ne "${BOLD}Upgrade ${pkg}? [Y/n] ${NC}"
             read -r answer
             if [[ "$answer" =~ ^[nN] ]]; then
                 info "Skipped $pkg"
+                continue
+            fi
+        fi
+
+        if [ -n "$target" ]; then
+            conflict_report=$(pip_would_conflict "$pkg" "$target")
+            conflict_rc=$?
+            if [ $conflict_rc -eq 1 ]; then
+                warn "Skipping $pkg: upgrading to $target would break an installed package's requirements"
+                echo -e "${YELLOW}${conflict_report}${NC}"
+                PIP_FAILED=$((PIP_FAILED + 1))
                 continue
             fi
         fi
@@ -685,12 +840,20 @@ update_pip() {
         fi
     done <<< "$OUTDATED"
 
+    # Catch anything still broken after the run (e.g. from prior upgrades
+    # outside this script).
+    local check_output
+    if ! check_output=$(pip check 2>&1); then
+        warn "pip check reports outstanding dependency problems:"
+        echo -e "${YELLOW}${check_output}${NC}"
+    fi
+
     if [ $PIP_FAILED -eq 0 ]; then
-        UPDATED+=("pip ($PIP_SUCCESS packages)")
-        success "All pip packages upgraded"
+        UPDATED+=("pip ($PIP_SUCCESS upgraded, $PIP_SKIPPED skipped)")
+        success "All eligible pip packages upgraded ($PIP_SKIPPED skipped)"
     else
-        UPDATED+=("pip ($PIP_SUCCESS upgraded, $PIP_FAILED failed)")
-        warn "Some pip packages failed ($PIP_FAILED failures)"
+        UPDATED+=("pip ($PIP_SUCCESS upgraded, $PIP_SKIPPED skipped, $PIP_FAILED failed/conflicting)")
+        warn "Some pip packages failed or were skipped due to conflicts ($PIP_FAILED)"
     fi
 }
 
@@ -914,6 +1077,11 @@ main() {
         info "Logging to: $LOG_FILE"
     fi
 
+    # Prime + keep the sudo credential alive for the whole run so a long
+    # non-sudo step (conda solving, pip upgrading packages one at a time)
+    # can't let the timestamp expire and force a second password prompt.
+    sudo_keepalive_start
+
     check_disk_before
     backup_packages
 
@@ -926,6 +1094,8 @@ main() {
     update_npm
     update_cargo
     update_firmware
+
+    sudo_keepalive_stop
 
     check_disk_after
     check_reboot

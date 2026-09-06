@@ -2,9 +2,16 @@
 
 *"Behold, the Updoot-inator! It updoots ALL your packages!"*
 
-![Version](https://img.shields.io/badge/version-1.4.0-blue)
+![Version](https://img.shields.io/badge/version-1.6.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20140581.svg)](https://doi.org/10.5281/zenodo.20140581)
+[![DOI](https://zenodo.org/badge/1218353675.svg)](https://doi.org/10.5281/zenodo.20140580)
+
+> **This is the final release of updoot-inator.** It has been merged with
+> its companion, [del-doot-inator](https://github.com/TravisBeckwith/del-doot-inator),
+> into [maintainctl](https://github.com/TravisBeckwith/maintainctl), which
+> covers both updating and cleaning in one tool. This repo will stay up
+> as-is for anyone who wants the update-only script standalone, but new
+> development happens in maintainctl.
 
 A single command to update everything on your system — apt, snap, flatpak, brew, conda, pip, npm, cargo, and firmware.
 
@@ -46,6 +53,10 @@ updoot-inator --only apt,pip
 # Skip specific managers
 updoot-inator --skip conda,npm
 
+# Skip pip packages that need a native/source build (wxPython is skipped
+# by default; add more of your own)
+updoot-inator --pip-exclude wxPython,some-other-package
+
 # Full update with backups, disk usage, and reboot check
 updoot-inator --backup --show-sizes --reboot-check
 
@@ -78,6 +89,8 @@ updoot-inator --list
 | `--reboot-check` | Check if reboot is needed after updates |
 | `--show-sizes` | Show disk usage before/after |
 | `--no-color` | Disable colored output |
+| `--pip-exclude <pkgs>` | Comma-separated pip packages to skip upgrading |
+| `--no-pip-exclude-defaults` | Don't skip the built-in list of pip packages known to require a native source build (currently: `wxPython`) |
 
 ## Supported Package Managers
 
@@ -88,7 +101,7 @@ updoot-inator --list
 | flatpak | flatpak update |
 | brew | update, upgrade, cleanup |
 | conda | Updates base + all named and path-based environments |
-| pip | Upgrades all outdated packages individually (skipped on PEP 668 externally-managed system Pythons) |
+| pip | Upgrades outdated packages individually, skipping any that would conflict with another installed package's pinned requirements or that are in the native-build exclude list (skipped on PEP 668 externally-managed system Pythons) |
 | npm | npm update -g |
 | cargo | rustup update + cargo install-update |
 | firmware | fwupdmgr check + update |
@@ -105,4 +118,31 @@ bash ./uninstall.sh
 cd updoot-inator
 git pull
 bash ./install.sh   # re-copies the new version into /usr/local/bin
+```
+
+## Release Notes
+
+**Fixed**
+- **Repeated sudo prompts**: apt, snap, and (conditionally) npm each called
+  `sudo` cold, with nothing keeping the cached sudo timestamp alive in
+  between. A long non-sudo step in the same run (conda solving an
+  environment, pip upgrading packages one at a time) could run past sudo's
+  default `timestamp_timeout`, so a later sudo-gated step prompted for the
+  password again even though you'd already authenticated earlier in the
+  same run. `updoot-inator` now authenticates once at the start of a run
+  and refreshes the cached credential in the background for the run's
+  lifetime, so this only happens once. Skipped entirely in `--dry-run`.
+
+See [Changelog.md](Changelog.md) for the full version history.
+
+## Successor
+
+This repo is no longer under active development. Its functionality — and
+del-doot-inator's — now lives in
+[maintainctl](https://github.com/TravisBeckwith/maintainctl):
+
+```bash
+maintainctl update   # replaces: updoot-inator
+maintainctl clean    # replaces: del-doot-inator
+maintainctl all      # replaces: updoot-inator && del-doot-inator
 ```

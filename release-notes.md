@@ -1,18 +1,11 @@
-# updoot-inator v1.3.0
+# updoot-inator v1.6.0 (final release)
 
-## Bug Fixes
+This is the last release of updoot-inator as a standalone tool. Its functionality has been merged with del-doot-inator into [maintainctl](https://github.com/TravisBeckwith/maintainctl) (`maintainctl update`). This repo remains available for anyone who wants the update-only script on its own; no new features will land here.
 
-- **Fixed install**: `install.sh` was looking for `updoot-inator` instead of `updoot-inator.sh`, causing every fresh install to fail
-- **Fixed argument parsing**: `case "\$1"` was matching the literal string `$1` instead of the actual argument, causing every option (`--dry-run`, `--help`, etc.) to return "Unknown option"
-- **Fixed variable references**: Escaped `\$` throughout functions, local variables, and awk commands caused broken output (e.g. `[DRY-RUN] $1` instead of actual descriptions)
-- **Fixed conda env detection**: `for env in $(...)` loop was glob-expanding `*` from conda's active-env marker into filenames in the current directory, causing the script to attempt updating repo files as conda environments
-- **Fixed conda path-based envs**: Environments stored by full path now use `-p` instead of `-n`, fixing update failures for envs like `/home/user/miniforge3/envs/myenv`
-- **Fixed npm permissions**: `npm update -g` now runs with `sudo` and suppresses non-actionable `EBADENGINE` warnings
-- **Fixed pip failure message**: "dependency conflict?" was misleading — message now correctly indicates the failure could be a build error, dependency conflict, or missing system libraries
-- **Fixed CRLF line endings**: All shell scripts converted from Windows to Unix line endings, which was breaking shebangs on Linux
-- **Fixed execute permissions**: Shell scripts now have correct execute bit set in git
+## Fixed
 
-## Other Changes
+- **Repeated sudo prompts**: apt, snap, and (conditionally) npm each called `sudo` cold, with nothing keeping the cached sudo timestamp alive between calls. A long non-sudo step in the same run (conda solving an environment, pip upgrading packages one at a time) could outlast sudo's default `timestamp_timeout`, causing a later sudo-gated step to prompt for the password again. Added an up-front `sudo -v` plus a background refresh every 60s for the run's lifetime (torn down on exit). Skipped entirely in `--dry-run`, since nothing is actually executed there.
 
-- Added `.gitattributes` to enforce LF line endings for all shell scripts going forward
-- Improved README install instructions
+## Removed
+
+- **Deleted `update-all.sh` (again, for real this time)**: the stale orphaned copy of the old v1.2.0 script had crept back into distributed archives of the repo despite being removed in 1.4.0 and again in 1.5.0. It was never referenced by `install.sh`. `updoot-inator.sh` remains the one and only entry point.
